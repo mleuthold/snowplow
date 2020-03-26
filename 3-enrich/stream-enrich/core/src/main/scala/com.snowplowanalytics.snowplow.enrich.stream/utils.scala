@@ -18,13 +18,34 @@
  */
 package com.snowplowanalytics.snowplow.enrich.stream
 
+import java.io.{File, FileInputStream}
+import java.net.URI
+import java.nio.file.{Files, Paths}
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 
 import cats.Id
 import cats.effect.Clock
 import cats.syntax.either._
+import com.amazonaws.auth.{
+  AWSCredentialsProvider,
+  AWSStaticCredentialsProvider,
+  BasicAWSCredentials,
+  DefaultAWSCredentialsProviderChain,
+  EnvironmentVariableCredentialsProvider,
+  InstanceProfileCredentialsProvider
+}
+import com.amazonaws.services.s3.AmazonS3ClientBuilder
+import com.amazonaws.services.s3.model.GetObjectRequest
+import com.google.auth.oauth2.GoogleCredentials
+import com.google.cloud.storage.{BlobId, StorageOptions}
 import com.snowplowanalytics.snowplow.enrich.common.enrichments.EnrichmentRegistry
+import com.snowplowanalytics.snowplow.enrich.stream.model.{
+  AWSCredentials,
+  Credentials,
+  GCPCredentials,
+  NoCredentials
+}
 import com.snowplowanalytics.snowplow.scalatracker.UUIDProvider
 
 object utils {
@@ -48,5 +69,99 @@ object utils {
 
   implicit val uuidProvider: UUIDProvider[Id] = new UUIDProvider[Id] {
     override def generateUUID: Id[UUID] = UUID.randomUUID()
+  }
+
+  def getAWSCredentialsProvider(creds: Credentials): Either[String, AWSCredentialsProvider] = {
+    def isDefault(key: String): Boolean = key == "default"
+    def isIam(key: String): Boolean = key == "iam"
+    def isEnv(key: String): Boolean = key == "env"
+
+    for {
+      awsCreds <- creds match {
+        case NoCredentials => "No AWS credentials provided".asLeft
+        case _: GCPCredentials => "GCP credentials provided".asLeft
+        case c: AWSCredentials => c.asRight
+      }
+      provider <- awsCreds match {
+        case AWSCredentials(a, s) if isDefault(a) && isDefault(s) =>
+          new DefaultAWSCredentialsProviderChain().asRight
+        case AWSCredentials(a, s) if isDefault(a) || isDefault(s) =>
+          "accessKey and secretKey must both be set to 'default' or neither".asLeft
+        case AWSCredentials(a, s) if isIam(a) && isIam(s) =>
+          InstanceProfileCredentialsProvider.getInstance().asRight
+        case AWSCredentials(a, s) if isIam(a) && isIam(s) =>
+          "accessKey and secretKey must both be set to 'iam' or neither".asLeft
+        case AWSCredentials(a, s) if isEnv(a) && isEnv(s) =>
+          new EnvironmentVariableCredentialsProvider().asRight
+        case AWSCredentials(a, s) if isEnv(a) || isEnv(s) =>
+          "accessKey and secretKey must both be set to 'env' or neither".asLeft
+        case AWSCredentials(a, s) =>
+          new AWSStaticCredentialsProvider(new BasicAWSCredentials(a, s)).asRight
+      }
+    } yield provider
+  }
+
+  /**
+   * Create GoogleCredentials based on provided service account credentials file
+   * @param creds path to service account file
+   * @return
+   */
+  def getGoogleCredentials(creds: Credentials): Either[String, GoogleCredentials] =
+    for {
+      gcpCreds <- creds match {
+        case NoCredentials => "No GCP Credentials provided".asLeft
+        case _: AWSCredentials => "AWS credentials provided".asLeft
+        case c: GCPCredentials => c.asRight
+      }
+      credsPath = gcpCreds.creds
+      googleCreds <- {
+        if (Files.isRegularFile(Paths.get(credsPath)))
+          GoogleCredentials
+            .fromStream(new FileInputStream(credsPath))
+            .createScoped("https://www.googleapis.com/auth/cloud-platform")
+            .asRight
+        else "Provided Google Credentials Path isn't valid".asLeft
+      }
+    } yield googleCreds
+
+  /**
+   * Downloads an object from S3 and returns whether or not it was successful.
+   * @param uri The URI to reconstruct into a signed S3 URL
+   * @param targetFile The file object to write to
+   * @param provider necessary credentials to download from S3
+   * @return the download result
+   */
+  def downloadFromS3(
+    provider: AWSCredentialsProvider,
+    uri: URI,
+    targetFile: File
+  ): Either[Throwable, Int] = {
+    val s3Client = AmazonS3ClientBuilder.standard().withCredentials(provider).build()
+    val bucketName = uri.getHost
+    val key = uri.getPath match { // Need to remove leading '/'
+      case s if s.length > 0 && s.charAt(0) == '/' => s.substring(1)
+      case s => s
+    }
+    Either.catchNonFatal {
+      s3Client.getObject(new GetObjectRequest(bucketName, key), targetFile)
+      0
+    }
+  }
+
+  def downloadFromGCS(
+    creds: GoogleCredentials,
+    uri: URI,
+    targetFile: File
+  ): Either[Throwable, Int] = {
+    val storage = StorageOptions.newBuilder().setCredentials(creds).build().getService
+    val bucketName = uri.getHost
+    val key = uri.getPath match { // Need to remove leading '/'
+      case s if s.length > 0 && s.charAt(0) == '/' => s.substring(1)
+      case s => s
+    }
+    Either.catchNonFatal {
+      storage.get(BlobId.of(bucketName, key)).downloadTo(targetFile.toPath)
+      0
+    }
   }
 }

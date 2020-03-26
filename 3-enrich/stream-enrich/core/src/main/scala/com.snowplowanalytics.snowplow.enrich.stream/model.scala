@@ -27,6 +27,7 @@ object model {
   sealed trait Credentials
   case object NoCredentials extends Credentials
   final case class AWSCredentials(accessKey: String, secretKey: String) extends Credentials
+  final case class GCPCredentials(creds: String) extends Credentials
 
   // Case classes necessary to the decoding of the configuration
   final case class StreamsConfig(
@@ -44,10 +45,16 @@ object model {
     partitionKey: String
   )
   final case class KinesisBackoffPolicyConfig(minBackoff: Long, maxBackoff: Long)
-  sealed trait SourceSinkConfig
+  sealed trait SourceSinkConfig {
+    def gcp: Option[GCPCredentials]
+  }
+  sealed trait SourceSinkAgnosticConfig extends SourceSinkConfig {
+    def aws: Option[AWSCredentials]
+  }
   final case class Kinesis(
-    region: String,
     aws: AWSCredentials,
+    gcp: Option[GCPCredentials],
+    region: String,
     maxRecords: Int,
     initialPosition: String,
     initialTimestamp: Option[String],
@@ -69,19 +76,24 @@ object model {
     })
   }
   final case class Kafka(
+    aws: Option[AWSCredentials],
+    gcp: Option[GCPCredentials],
     brokers: String,
     retries: Int,
     consumerConf: Option[Map[String, String]],
     producerConf: Option[Map[String, String]]
-  ) extends SourceSinkConfig
+  ) extends SourceSinkAgnosticConfig
   final case class Nsq(
+    aws: Option[AWSCredentials],
+    gcp: Option[GCPCredentials],
     rawChannel: String,
     host: String,
     port: Int,
     lookupHost: String,
     lookupPort: Int
-  ) extends SourceSinkConfig
-  case object Stdin extends SourceSinkConfig
+  ) extends SourceSinkAgnosticConfig
+  final case class Stdin(aws: Option[AWSCredentials], gcp: Option[GCPCredentials])
+      extends SourceSinkAgnosticConfig
   final case class BufferConfig(
     byteLimit: Long,
     recordLimit: Long,
