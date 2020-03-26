@@ -50,9 +50,7 @@ import com.snowplowanalytics.snowplow.scalatracker.UUIDProvider
 
 object utils {
   def emitPii(enrichmentRegistry: EnrichmentRegistry[Id]): Boolean =
-    enrichmentRegistry.piiPseudonymizer
-      .map(_.emitIdentificationEvent)
-      .getOrElse(false)
+    enrichmentRegistry.piiPseudonymizer.exists(_.emitIdentificationEvent)
 
   def validatePii(emitPii: Boolean, streamName: Option[String]): Either[String, Unit] =
     (emitPii, streamName) match {
@@ -77,12 +75,9 @@ object utils {
     def isEnv(key: String): Boolean = key == "env"
 
     for {
-      awsCreds <- creds match {
+      provider <- creds match {
         case NoCredentials => "No AWS credentials provided".asLeft
         case _: GCPCredentials => "GCP credentials provided".asLeft
-        case c: AWSCredentials => c.asRight
-      }
-      provider <- awsCreds match {
         case AWSCredentials(a, s) if isDefault(a) && isDefault(s) =>
           new DefaultAWSCredentialsProviderChain().asRight
         case AWSCredentials(a, s) if isDefault(a) || isDefault(s) =>
@@ -104,25 +99,32 @@ object utils {
   /**
    * Create GoogleCredentials based on provided service account credentials file
    * @param creds path to service account file
-   * @return
+   * @return Either an error or GoogleCredentials
    */
-  def getGoogleCredentials(creds: Credentials): Either[String, GoogleCredentials] =
-    for {
-      gcpCreds <- creds match {
-        case NoCredentials => "No GCP Credentials provided".asLeft
-        case _: AWSCredentials => "AWS credentials provided".asLeft
-        case c: GCPCredentials => c.asRight
-      }
-      credsPath = gcpCreds.creds
-      googleCreds <- {
-        if (Files.isRegularFile(Paths.get(credsPath)))
-          GoogleCredentials
-            .fromStream(new FileInputStream(credsPath))
-            .createScoped("https://www.googleapis.com/auth/cloud-platform")
-            .asRight
-        else "Provided Google Credentials Path isn't valid".asLeft
-      }
-    } yield googleCreds
+  def getGoogleCredentials(creds: Credentials): Either[String, GoogleCredentials] = {
+    def createIfRegular(isRegular: Boolean, path: String): Either[String, GoogleCredentials] =
+      if (isRegular)
+        Either
+          .catchNonFatal(
+            GoogleCredentials
+              .fromStream(new FileInputStream(path))
+              .createScoped("https://www.googleapis.com/auth/cloud-platform")
+          )
+          .leftMap(_.getMessage)
+      else
+        "Provided Google Credentials Path isn't valid".asLeft
+
+    creds match {
+      case NoCredentials => "No GCP Credentials provided".asLeft
+      case _: AWSCredentials => "AWS credentials provided".asLeft
+      case GCPCredentials(credsPath) =>
+        for {
+          path <- Either.catchNonFatal(Paths.get(credsPath)).leftMap(_.getMessage)
+          isRegular <- Either.catchNonFatal(Files.isRegularFile(path)).leftMap(_.getMessage)
+          gCreds <- createIfRegular(isRegular, credsPath)
+        } yield gCreds
+    }
+  }
 
   /**
    * Downloads an object from S3 and returns whether or not it was successful.
@@ -135,33 +137,31 @@ object utils {
     provider: AWSCredentialsProvider,
     uri: URI,
     targetFile: File
-  ): Either[Throwable, Int] = {
-    val s3Client = AmazonS3ClientBuilder.standard().withCredentials(provider).build()
-    val bucketName = uri.getHost
-    val key = uri.getPath match { // Need to remove leading '/'
-      case s if s.length > 0 && s.charAt(0) == '/' => s.substring(1)
-      case s => s
-    }
+  ): Either[Throwable, Int] =
     Either.catchNonFatal {
+      val s3Client = AmazonS3ClientBuilder.standard().withCredentials(provider).build()
+      val bucketName = uri.getHost
+      val key = uri.getPath match { // Need to remove leading '/'
+        case s if s.length > 0 && s.charAt(0) == '/' => s.substring(1)
+        case s => s
+      }
       s3Client.getObject(new GetObjectRequest(bucketName, key), targetFile)
       0
     }
-  }
 
   def downloadFromGCS(
     creds: GoogleCredentials,
     uri: URI,
     targetFile: File
-  ): Either[Throwable, Int] = {
-    val storage = StorageOptions.newBuilder().setCredentials(creds).build().getService
-    val bucketName = uri.getHost
-    val key = uri.getPath match { // Need to remove leading '/'
-      case s if s.length > 0 && s.charAt(0) == '/' => s.substring(1)
-      case s => s
-    }
+  ): Either[Throwable, Int] =
     Either.catchNonFatal {
+      val storage = StorageOptions.newBuilder().setCredentials(creds).build().getService
+      val bucketName = uri.getHost
+      val key = uri.getPath match { // Need to remove leading '/'
+        case s if s.length > 0 && s.charAt(0) == '/' => s.substring(1)
+        case s => s
+      }
       storage.get(BlobId.of(bucketName, key)).downloadTo(targetFile.toPath)
       0
     }
-  }
 }

@@ -29,6 +29,8 @@ object model {
   final case class AWSCredentials(accessKey: String, secretKey: String) extends Credentials
   final case class GCPCredentials(creds: String) extends Credentials
 
+  case class MultiCloudCredentials(aws: Credentials, gcp: Credentials)
+
   // Case classes necessary to the decoding of the configuration
   final case class StreamsConfig(
     in: InConfig,

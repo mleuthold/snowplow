@@ -64,13 +64,13 @@ trait Enrich {
       config <- parseConfig(args)
       (enrichConfig, resolverArg, enrichmentsArg, forceDownload) = config
       sourceSink = enrichConfig.streams.sourceSink.asInstanceOf[SourceSinkAgnosticConfig]
-      credentials <- (
+      credentials <- MultiCloudCredentials(
         sourceSink.aws.fold[Credentials](NoCredentials)(identity),
         sourceSink.gcp.fold[Credentials](NoCredentials)(identity)
       ).asRight
       client <- parseClient(resolverArg)
       enrichmentsConf <- parseEnrichmentRegistry(enrichmentsArg, client)(implicitly)
-      _ <- cacheFiles(enrichmentsConf, forceDownload)(credentials._1, credentials._2)
+      _ <- cacheFiles(enrichmentsConf, forceDownload)(credentials.aws, credentials.gcp)
       tracker = enrichConfig.monitoring.map(c => SnowplowTracking.initializeTracker(c.snowplow))
       enrichmentRegistry <- EnrichmentRegistry.build[Id](enrichmentsConf).value
       adapterRegistry = new AdapterRegistry(prepareRemoteAdapters(enrichConfig.remoteAdapters))
@@ -258,7 +258,7 @@ a  * @param creds optionally necessary credentials to download the resolver
     uri: URI,
     targetFile: File
   )(
-    implicit awsCreds: Credentials,
+    awsCreds: Credentials,
     gcpCreds: Credentials
   ): Either[String, Int] =
     uri.getScheme match {
@@ -288,7 +288,7 @@ a  * @param creds optionally necessary credentials to download the resolver
     confs: List[EnrichmentConf],
     forceDownload: Boolean
   )(
-    implicit awsCreds: Credentials,
+    awsCreds: Credentials,
     gcpCreds: Credentials
   ): Either[String, List[Int]] = {
     val filesToCache: List[(URI, String)] = confs.flatMap(_.filesToCache)

@@ -41,7 +41,7 @@ import com.snowplowanalytics.snowplow.scalatracker.Tracker
 import io.circe.Json
 import io.circe.syntax._
 import config._
-import model.{Credentials, Kinesis, NoCredentials, StreamsConfig}
+import model.{Credentials, Kinesis, MultiCloudCredentials, NoCredentials, StreamsConfig}
 import sources.KinesisSource
 import utils.getAWSCredentialsProvider
 
@@ -56,12 +56,13 @@ object KinesisEnrich extends Enrich {
       config <- parseConfig(args)
       (enrichConfig, resolverArg, enrichmentsArg, forceDownload) = config
       creds <- enrichConfig.streams.sourceSink match {
-        case c: Kinesis => (c.aws, c.gcp.fold[Credentials](NoCredentials)(identity)).asRight
+        case c: Kinesis =>
+          MultiCloudCredentials(c.aws, c.gcp.fold[Credentials](NoCredentials)(identity)).asRight
         case _ => "Configured source/sink is not Kinesis".asLeft
       }
-      client <- parseClient(resolverArg)(creds._1)
-      enrichmentsConf <- parseEnrichmentRegistry(enrichmentsArg, client)(creds._1)
-      _ <- cacheFiles(enrichmentsConf, forceDownload)(creds._1, creds._2)
+      client <- parseClient(resolverArg)(creds.aws)
+      enrichmentsConf <- parseEnrichmentRegistry(enrichmentsArg, client)(creds.aws)
+      _ <- cacheFiles(enrichmentsConf, forceDownload)(creds.aws, creds.gcp)
       enrichmentRegistry <- EnrichmentRegistry.build[Id](enrichmentsConf).value
       tracker = enrichConfig.monitoring.map(c => SnowplowTracking.initializeTracker(c.snowplow))
       adapterRegistry = new AdapterRegistry(prepareRemoteAdapters(enrichConfig.remoteAdapters))
