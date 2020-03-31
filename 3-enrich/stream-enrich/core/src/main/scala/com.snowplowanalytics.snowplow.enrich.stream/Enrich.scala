@@ -260,7 +260,7 @@ a  * @param creds optionally necessary credentials to download the resolver
   )(
     awsCreds: Credentials,
     gcpCreds: Credentials
-  ): Either[String, Int] =
+  ): Either[String, Any] =
     uri.getScheme match {
       case "http" | "https" => (uri.toURL #> targetFile).!.asRight
       case "s3" =>
@@ -290,7 +290,7 @@ a  * @param creds optionally necessary credentials to download the resolver
   )(
     awsCreds: Credentials,
     gcpCreds: Credentials
-  ): Either[String, List[Int]] = {
+  ): EitherS[List[Any]] = {
     val filesToCache: List[(URI, String)] = confs.flatMap(_.filesToCache)
     val cleanedFiles: List[(URI, File)] = filesToCache.map {
       case (uri, path) =>
@@ -303,14 +303,13 @@ a  * @param creds optionally necessary credentials to download the resolver
       case (_, targetFile) =>
         forceDownload || targetFile.length == 0L
     }
-    val downloadedFiles: List[Either[String, Int]] = filteredFiles.map {
+    val downloadedFiles: List[Either[String, Any]] = filteredFiles.map {
       case (cleanURI, targetFile) =>
-        download(cleanURI, targetFile)(awsCreds, gcpCreds).flatMap {
-          case i if i != 0 => s"Attempt to download $cleanURI to $targetFile failed".asLeft
-          case o => o.asRight
+        download(cleanURI, targetFile)(awsCreds, gcpCreds).leftMap { err =>
+          s"Attempt to download $cleanURI to $targetFile failed: $err"
         }
     }
-    downloadedFiles.sequence[EitherS, Int]
+    downloadedFiles.sequence[EitherS, Any]
   }
 
   /**

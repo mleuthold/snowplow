@@ -27,25 +27,13 @@ import java.util.concurrent.TimeUnit
 import cats.Id
 import cats.effect.Clock
 import cats.syntax.either._
-import com.amazonaws.auth.{
-  AWSCredentialsProvider,
-  AWSStaticCredentialsProvider,
-  BasicAWSCredentials,
-  DefaultAWSCredentialsProviderChain,
-  EnvironmentVariableCredentialsProvider,
-  InstanceProfileCredentialsProvider
-}
+import com.amazonaws.auth.{AWSCredentialsProvider, AWSStaticCredentialsProvider, BasicAWSCredentials, DefaultAWSCredentialsProviderChain, EnvironmentVariableCredentialsProvider, InstanceProfileCredentialsProvider}
 import com.amazonaws.services.s3.AmazonS3ClientBuilder
-import com.amazonaws.services.s3.model.GetObjectRequest
+import com.amazonaws.services.s3.model.{GetObjectRequest, ObjectMetadata}
 import com.google.auth.oauth2.GoogleCredentials
 import com.google.cloud.storage.{BlobId, StorageOptions}
 import com.snowplowanalytics.snowplow.enrich.common.enrichments.EnrichmentRegistry
-import com.snowplowanalytics.snowplow.enrich.stream.model.{
-  AWSCredentials,
-  Credentials,
-  GCPCredentials,
-  NoCredentials
-}
+import com.snowplowanalytics.snowplow.enrich.stream.model.{AWSCredentials, Credentials, GCPCredentials, NoCredentials}
 import com.snowplowanalytics.snowplow.scalatracker.UUIDProvider
 
 object utils {
@@ -137,7 +125,7 @@ object utils {
     provider: AWSCredentialsProvider,
     uri: URI,
     targetFile: File
-  ): Either[Throwable, Int] =
+  ): Either[Throwable, ObjectMetadata] =
     Either.catchNonFatal {
       val s3Client = AmazonS3ClientBuilder.standard().withCredentials(provider).build()
       val bucketName = uri.getHost
@@ -146,14 +134,13 @@ object utils {
         case s => s
       }
       s3Client.getObject(new GetObjectRequest(bucketName, key), targetFile)
-      0
     }
 
   def downloadFromGCS(
     creds: GoogleCredentials,
     uri: URI,
     targetFile: File
-  ): Either[Throwable, Int] =
+  ): Either[Throwable, Unit] =
     Either.catchNonFatal {
       val storage = StorageOptions.newBuilder().setCredentials(creds).build().getService
       val bucketName = uri.getHost
@@ -162,6 +149,5 @@ object utils {
         case s => s
       }
       storage.get(BlobId.of(bucketName, key)).downloadTo(targetFile.toPath)
-      0
     }
 }
