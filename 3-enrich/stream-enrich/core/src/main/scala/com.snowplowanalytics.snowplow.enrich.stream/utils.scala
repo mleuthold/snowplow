@@ -27,13 +27,27 @@ import java.util.concurrent.TimeUnit
 import cats.Id
 import cats.effect.Clock
 import cats.syntax.either._
-import com.amazonaws.auth.{AWSCredentialsProvider, AWSStaticCredentialsProvider, BasicAWSCredentials, DefaultAWSCredentialsProviderChain, EnvironmentVariableCredentialsProvider, InstanceProfileCredentialsProvider}
+import com.amazonaws.auth.{
+  AWSCredentialsProvider,
+  AWSStaticCredentialsProvider,
+  BasicAWSCredentials,
+  DefaultAWSCredentialsProviderChain,
+  EnvironmentVariableCredentialsProvider,
+  InstanceProfileCredentialsProvider
+}
 import com.amazonaws.services.s3.AmazonS3ClientBuilder
 import com.amazonaws.services.s3.model.{GetObjectRequest, ObjectMetadata}
 import com.google.auth.oauth2.GoogleCredentials
 import com.google.cloud.storage.{BlobId, StorageOptions}
 import com.snowplowanalytics.snowplow.enrich.common.enrichments.EnrichmentRegistry
-import com.snowplowanalytics.snowplow.enrich.stream.model.{AWSCredentials, Credentials, GCPCredentials, NoCredentials}
+import com.snowplowanalytics.snowplow.enrich.stream.model.{
+  AWSCredentials,
+  Credentials,
+  GCPCredentials,
+  MultiCloudCredentials,
+  NoCredentials,
+  SourceSinkAgnosticConfig
+}
 import com.snowplowanalytics.snowplow.scalatracker.UUIDProvider
 
 object utils {
@@ -150,4 +164,10 @@ object utils {
       }
       storage.get(BlobId.of(bucketName, key)).downloadTo(targetFile.toPath)
     }
+
+  def extractCredentials(config: SourceSinkAgnosticConfig): MultiCloudCredentials =
+    MultiCloudCredentials(
+      config.aws.fold[Credentials](NoCredentials)(identity),
+      config.gcp.fold[Credentials](NoCredentials)(identity)
+    )
 }

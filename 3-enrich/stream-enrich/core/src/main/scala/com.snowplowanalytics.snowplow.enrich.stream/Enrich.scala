@@ -64,10 +64,7 @@ trait Enrich {
       config <- parseConfig(args)
       (enrichConfig, resolverArg, enrichmentsArg, forceDownload) = config
       sourceSink = enrichConfig.streams.sourceSink.asInstanceOf[SourceSinkAgnosticConfig]
-      credentials <- MultiCloudCredentials(
-        sourceSink.aws.fold[Credentials](NoCredentials)(identity),
-        sourceSink.gcp.fold[Credentials](NoCredentials)(identity)
-      ).asRight
+      credentials <- extractCredentials(sourceSink).asRight
       client <- parseClient(resolverArg)
       enrichmentsConf <- parseEnrichmentRegistry(enrichmentsArg, client)(implicitly)
       _ <- cacheFiles(enrichmentsConf, forceDownload)(credentials.aws, credentials.gcp)
